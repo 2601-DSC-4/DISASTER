@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: disaster-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: disaster-backend:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: REDIS_HOST
+              value: redis
+            - name: STORAGE_DIR
+              value: /app/storage/reports
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: report-storage
+              mountPath: /app/storage
+      volumes:
+        - name: report-storage
+          hostPath:
+            path: /tmp/disaster-storage
+            type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: disaster-system
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30080
+  type: NodePort

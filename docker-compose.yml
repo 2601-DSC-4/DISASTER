@@ -1,0 +1,90 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: disaster-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: disaster-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: disaster-backend:latest
+    build:
+      context: ./backend
+    container_name: disaster-backend
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+      STORAGE_DIR: /app/storage/reports
+    volumes:
+      - ./storage:/app/storage
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rabbitmq
+      - redis
+
+  worker:
+    image: disaster-worker:latest
+    build:
+      context: ./worker
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      STORAGE_ROOT: /app/storage
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      - rabbitmq
+
+  aggregator:
+    image: disaster-aggregator:latest
+    build:
+      context: ./aggregator
+    container_name: disaster-aggregator
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      REDIS_HOST: redis
+    depends_on:
+      - rabbitmq
+      - redis
+
+  simulator:
+    image: disaster-simulator:latest
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8000
+      MODE: normal
+      DURATION: 30
+    profiles:
+      - tools
+    depends_on:
+      - backend
+
+  dashboard:
+    image: disaster-dashboard:latest
+    build:
+      context: ./dashboard
+    container_name: disaster-dashboard
+    environment:
+      BACKEND_PROXY_TARGET: http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

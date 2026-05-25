@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: result-aggregator
+  namespace: disaster-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: result-aggregator
+  template:
+    metadata:
+      labels:
+        app: result-aggregator
+    spec:
+      containers:
+        - name: result-aggregator
+          image: disaster-aggregator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: REDIS_HOST
+              value: redis

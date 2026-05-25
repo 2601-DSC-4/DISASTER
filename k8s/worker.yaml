@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analysis-worker
+  namespace: disaster-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analysis-worker
+  template:
+    metadata:
+      labels:
+        app: analysis-worker
+    spec:
+      containers:
+        - name: analysis-worker
+          image: disaster-worker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: STORAGE_ROOT
+              value: /app/storage
+          volumeMounts:
+            - name: report-storage
+              mountPath: /app/storage
+      volumes:
+        - name: report-storage
+          hostPath:
+            path: /tmp/disaster-storage
+            type: DirectoryOrCreate
