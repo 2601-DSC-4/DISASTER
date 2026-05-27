@@ -13,6 +13,11 @@ RATE = int(os.getenv("RATE", str(DEFAULT_RATE)))
 DURATION = int(os.getenv("DURATION", "30"))
 SAMPLE_DIR = Path(os.getenv("SAMPLE_DIR", "/app/sample_images"))
 
+# 영상 데모용: 업로드가 끝난 뒤 RabbitMQ 작업 큐가 빌 때까지 기다리며 총 시간을 출력한다.
+WAIT_FOR_QUEUE_DRAIN = os.getenv("WAIT_FOR_QUEUE_DRAIN", "true").lower() in {"1", "true", "yes"}
+QUEUE_POLL_INTERVAL = float(os.getenv("QUEUE_POLL_INTERVAL", "1"))
+QUEUE_DRAIN_TIMEOUT = int(os.getenv("QUEUE_DRAIN_TIMEOUT", "600"))
+
 
 def wait_for_backend(retries: int = 60, delay: float = 2.0) -> None:
     for attempt in range(1, retries + 1):
@@ -28,7 +33,7 @@ def wait_for_backend(retries: int = 60, delay: float = 2.0) -> None:
 
 
 def upload_image(image_path: Path, index: int) -> None:
-    location = "서울시 동대문구"
+    location = "Seoul Dongdaemun-gu"
     description = f"{MODE} mode upload #{index} from {image_path.name}"
 
     with image_path.open("rb") as file_obj:
@@ -39,6 +44,43 @@ def upload_image(image_path: Path, index: int) -> None:
         print(f"[simulator] uploaded {image_path.name}: {response.json()['reportId']}")
 
 
+def get_queue_length() -> int:
+    response = requests.get(f"{BACKEND_URL}/queue/status", timeout=5)
+    response.raise_for_status()
+    return int(response.json().get("messages", 0))
+
+
+def wait_for_queue_drain(started_at: float) -> None:
+    if not WAIT_FOR_QUEUE_DRAIN:
+        elapsed = time.perf_counter() - started_at
+        print("[simulator] queue empty wait disabled")
+        print(f"[simulator] total seconds: {elapsed:.2f}")
+        return
+
+    print("[simulator] waiting until image.task.queue becomes empty...")
+    deadline = time.time() + QUEUE_DRAIN_TIMEOUT
+
+    while True:
+        try:
+            queue_length = get_queue_length()
+            print(f"Current queue length: {queue_length}")
+            if queue_length <= 0:
+                elapsed = time.perf_counter() - started_at
+                print("[simulator] queue empty")
+                print(f"[simulator] total seconds: {elapsed:.2f}")
+                return
+        except requests.RequestException as exc:
+            print(f"[simulator] queue status check failed: {exc}")
+
+        if time.time() >= deadline:
+            elapsed = time.perf_counter() - started_at
+            print(f"[simulator] queue empty timeout after {QUEUE_DRAIN_TIMEOUT}s")
+            print(f"[simulator] total seconds: {elapsed:.2f}")
+            return
+
+        time.sleep(QUEUE_POLL_INTERVAL)
+
+
 def main() -> None:
     images = sorted(SAMPLE_DIR.glob("*.jpg"))
     if not images:
@@ -47,6 +89,7 @@ def main() -> None:
     wait_for_backend()
     print(f"[simulator] mode={MODE}, rate={RATE}/sec, duration={DURATION}s")
 
+    started_at = time.perf_counter()
     interval = 1 / max(RATE, 1)
     deadline = time.time() + DURATION
     image_cycle = cycle(images)
@@ -67,6 +110,7 @@ def main() -> None:
             time.sleep(sleep_for)
 
     print(f"[simulator] finished, attempted uploads={count}")
+    wait_for_queue_drain(started_at)
 
 
 if __name__ == "__main__":
