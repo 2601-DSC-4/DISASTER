@@ -57,7 +57,7 @@ docker compose down
 ## 4. 접속 URL
 
 - RabbitMQ 관리 페이지: http://localhost:15672
-- RabbitMQ 계정: `guest / guest`
+- RabbitMQ 계정: Docker Compose는 `guest / guest`, k3s는 `disaster / disasterpass`
 - FastAPI 문서: http://localhost:8000/docs
 - Dashboard: http://localhost:3000
 
@@ -142,13 +142,20 @@ curl.exe http://localhost:8000/queue/status
 
 Worker는 각 작업마다 `time.sleep(0.3)`을 수행하여 분석 시간이 걸리는 상황을 만듭니다.
 
-## 10. k3s 설치 후 k8s 매니페스트 배포
+## 10. k3s, KEDA 설치 후 k8s 매니페스트 배포
 
 Ubuntu 미니PC 또는 Linux 환경에서 k3s를 설치합니다.
 
 ```bash
 curl -sfL https://get.k3s.io | sh -
 sudo kubectl get nodes
+```
+
+KEDA는 RabbitMQ queue length를 보고 `analysis-worker` Deployment를 자동 확장합니다. Helm 설치 후 다음 스크립트를 실행합니다.
+
+```bash
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+bash scripts/install-keda.sh
 ```
 
 이미지를 로컬에서 빌드합니다.
@@ -164,11 +171,12 @@ docker save disaster-backend:latest disaster-worker:latest disaster-aggregator:l
 sudo k3s ctr images import disaster-images.tar
 ```
 
-매니페스트 배포:
+기본 앱과 KEDA `ScaledObject`를 배포합니다.
 
 ```bash
-kubectl apply -f k8s/
+kubectl apply -k k8s
 kubectl get pods -n disaster-system
+kubectl get scaledobject -n disaster-system
 ```
 
 접속:
@@ -180,35 +188,36 @@ kubectl get pods -n disaster-system
 삭제:
 
 ```bash
-kubectl delete -f k8s/
+kubectl delete -k k8s
 ```
 
-## 11. k3s에서 Worker Pod scale-out
+## 11. k3s에서 KEDA Worker 자동 scale-out
 
-최종발표 핵심 명령입니다.
+최종발표 핵심은 수동 `kubectl scale`이 아니라 KEDA 자동 확장입니다. `k8s/keda-scaledobject.yaml`은 `image.task.queue` 길이를 기준으로 `analysis-worker`를 1개에서 최대 5개까지 조절합니다.
 
 ```bash
-kubectl scale deployment analysis-worker --replicas=5 -n disaster-system
 kubectl get pods -n disaster-system -w
-```
-
-다시 1개로 줄이기:
-
-```bash
-kubectl scale deployment analysis-worker --replicas=1 -n disaster-system
+kubectl get hpa -n disaster-system
+kubectl describe scaledobject analysis-worker-rabbitmq-scaler -n disaster-system
 ```
 
 ## 12. k3s에서 Simulator Job 실행
 
-기본 `k8s/simulator-job.yaml`은 `MODE=disaster`, `RATE=20`, `DURATION=30`으로 설정되어 있습니다.
+평상시 normal mode는 1초당 1장 업로드합니다.
 
 ```bash
-kubectl delete job upload-simulator -n disaster-system --ignore-not-found
-kubectl apply -f k8s/simulator-job.yaml
-kubectl logs -f job/upload-simulator -n disaster-system
+kubectl delete job upload-simulator-normal -n disaster-system --ignore-not-found
+kubectl apply -f k8s/jobs/normal-simulator-job.yaml
+kubectl logs -f job/upload-simulator-normal -n disaster-system
 ```
 
-평상시 모드를 실행하려면 `k8s/simulator-job.yaml`의 `MODE`, `RATE`, `DURATION` 값을 수정한 뒤 다시 apply합니다.
+재난 disaster mode는 1초당 20장 업로드합니다.
+
+```bash
+kubectl delete job upload-simulator-disaster -n disaster-system --ignore-not-found
+kubectl apply -f k8s/jobs/disaster-simulator-job.yaml
+kubectl logs -f job/upload-simulator-disaster -n disaster-system
+```
 
 ## 13. 미니PC Ubuntu에서 GitHub clone 후 k3s 실행
 
@@ -222,11 +231,14 @@ git clone https://github.com/2601-DSC-4/DISASTER.git
 cd DISASTER
 
 curl -sfL https://get.k3s.io | sh -
+curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+bash scripts/install-keda.sh
+
 docker compose build
 docker save disaster-backend:latest disaster-worker:latest disaster-aggregator:latest disaster-simulator:latest disaster-dashboard:latest -o disaster-images.tar
 sudo k3s ctr images import disaster-images.tar
 
-kubectl apply -f k8s/
+kubectl apply -k k8s
 kubectl get pods -n disaster-system
 ```
 
@@ -259,19 +271,15 @@ kubectl get pods -n disaster-system
 ## 15. 최종발표 데모 순서
 
 1. 미니PC Ubuntu 또는 로컬 Linux 환경에서 k3s를 실행한다.
-2. `kubectl apply -f k8s/`
-3. `kubectl get pods -n disaster-system`으로 전체 Pod 상태를 확인한다.
-4. Worker Pod 1개 상태에서 재난 상황 Simulator Job을 실행한다.
-5. RabbitMQ 관리 페이지 또는 Dashboard에서 큐 길이 증가를 확인한다.
-6. Worker를 5개로 확장한다.
+2. `bash scripts/install-keda.sh`로 KEDA를 설치한다.
+3. `kubectl apply -k k8s`로 RabbitMQ, Redis, backend, worker, aggregator, dashboard, KEDA ScaledObject를 배포한다.
+4. `kubectl get pods -n disaster-system`으로 전체 Pod 상태를 확인한다.
+5. normal mode Job을 실행하고 큐가 거의 쌓이지 않는 것을 확인한다.
+6. disaster mode Job을 실행하고 RabbitMQ 관리 페이지 또는 Dashboard에서 큐 길이 증가를 확인한다.
+7. `kubectl get pods -n disaster-system -w`로 KEDA가 Worker Pod를 자동 증가시키는 것을 확인한다.
+8. Worker 증가 후 큐 길이가 감소하고, 부하가 끝나면 Worker가 다시 1개로 줄어드는 것을 확인한다.
 
-   ```bash
-   kubectl scale deployment analysis-worker --replicas=5 -n disaster-system
-   ```
-
-7. `kubectl get pods -n disaster-system -w`로 Worker Pod 증가를 확인한다.
-8. Dashboard에서 큐 길이 감소와 처리 지연 감소를 확인한다.
-9. 시간이 남으면 `worker/analysis_worker.py`의 Mock 분석기를 YOLO 또는 경량 이미지 분류 모델로 교체한다.
+자세한 발표 흐름은 `docs/final-demo-scenario.md`를 참고합니다.
 
 ## 16. GitHub에 첫 업로드
 

@@ -1,0 +1,43 @@
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: rabbitmq-trigger-auth
+  namespace: disaster-system
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: rabbitmq-credentials
+      key: host
+    - parameter: username
+      name: rabbitmq-credentials
+      key: username
+    - parameter: password
+      name: rabbitmq-credentials
+      key: password
+    - parameter: vhostName
+      name: rabbitmq-credentials
+      key: vhostName
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: analysis-worker-rabbitmq-scaler
+  namespace: disaster-system
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: analysis-worker
+  pollingInterval: 5
+  cooldownPeriod: 30
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: image.task.queue
+        mode: QueueLength
+        value: "10"
+        activationValue: "1"
+      authenticationRef:
+        name: rabbitmq-trigger-auth
