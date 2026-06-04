@@ -7,6 +7,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pika
+from PIL import Image
+from transformers import pipeline
 
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
@@ -20,8 +22,20 @@ RESULT_QUEUE = os.getenv("RESULT_QUEUE", "analysis.result.queue")
 WORKER_ID = os.getenv("WORKER_ID", socket.gethostname())
 TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Asia/Seoul"))
 
-# 데모용 분석 지연 시간
-MOCK_PROCESSING_DELAY = float(os.getenv("MOCK_PROCESSING_DELAY", "0.3"))
+STORAGE_ROOT = os.getenv("STORAGE_ROOT", "/app/storage")
+
+MODEL_NAME = os.getenv("MODEL_NAME", "Luwayy/disaster_images_model")
+ANALYSIS_TYPE = "HF_DISASTER_MODEL"
+
+
+print(f"[worker:{WORKER_ID}] loading model {MODEL_NAME}")
+
+classifier = pipeline(
+    task="image-classification",
+    model=MODEL_NAME,
+)
+
+print(f"[worker:{WORKER_ID}] model loaded")
 
 
 def now_iso() -> str:
@@ -41,67 +55,66 @@ def connect_rabbitmq(retries: int = 60, delay: float = 2.0) -> pika.BlockingConn
 
     for attempt in range(1, retries + 1):
         try:
-            print(f"[worker:{WORKER_ID}] connecting to RabbitMQ {RABBITMQ_HOST}:{RABBITMQ_PORT}")
+            print(
+                f"[worker:{WORKER_ID}] connecting to RabbitMQ "
+                f"{RABBITMQ_HOST}:{RABBITMQ_PORT}"
+            )
             return pika.BlockingConnection(params)
         except pika.exceptions.AMQPConnectionError:
-            print(f"[worker:{WORKER_ID}] RabbitMQ not ready ({attempt}/{retries}), retrying...")
+            print(
+                f"[worker:{WORKER_ID}] RabbitMQ not ready "
+                f"({attempt}/{retries}), retrying..."
+            )
             time.sleep(delay)
 
     raise RuntimeError("RabbitMQ connection failed")
 
 
-def extract_filename(task: dict) -> str:
-    """
-    imageUrl, fileName, imageId 중 사용 가능한 값에서 파일명을 추출한다.
-    현재 중간발표에서는 파일명 기반 Mock 분석을 사용한다.
-    """
-    image_url = task.get("imageUrl") or task.get("fileName") or task.get("imageId") or ""
-    return Path(image_url).name.lower()
+def resolve_image_path(image_url: str) -> str:
+    image_path = Path(image_url)
+
+    if image_path.is_absolute():
+        return str(image_path)
+
+    return str(Path(STORAGE_ROOT) / image_path)
 
 
-def classify_by_filename(task: dict) -> tuple[str, str, float]:
-    """
-    중간발표용 Mock 분석기.
+def determine_risk_level(model_label: str, confidence: float) -> str:
+    if model_label == "Non_Damage":
+        return "NORMAL"
 
-    실제 AI 모델 대신 파일명 규칙으로 재난 유형을 분류한다.
-    예:
-    - fire_001.jpg  -> FIRE
-    - flood_001.jpg -> FLOOD
-    - normal_001.jpg -> NORMAL
+    if confidence >= 0.7:
+        return "HIGH"
 
-    최종 발표 전에는 이 함수만 YOLO 또는 경량 이미지 분류 모델로 교체하면 된다.
-    """
-    filename = extract_filename(task)
-
-    if "fire" in filename or "flame" in filename or "smoke" in filename:
-        return "FIRE", "HIGH", 0.92
-
-    if "flood" in filename or "water" in filename or "rain" in filename:
-        return "FLOOD", "HIGH", 0.91
-
-    if "normal" in filename or "safe" in filename:
-        return "NORMAL", "LOW", 0.88
-
-    return "UNKNOWN", "LOW", 0.55
+    return "LOW"
 
 
-def build_result(task: dict, category: str, risk_level: str, confidence: float, processing_ms: int) -> dict:
-    return {
-        "taskId": task.get("taskId"),
-        "reportId": task.get("reportId"),
-        "imageId": task.get("imageId"),
-        "imageUrl": task.get("imageUrl"),
-        "location": task.get("location", ""),
-        "description": task.get("description", ""),
-        "uploadedAt": task.get("uploadedAt"),
-        "category": category,
-        "riskLevel": risk_level,
-        "confidence": confidence,
-        "processingMs": processing_ms,
-        "analyzedAt": now_iso(),
-        "workerId": WORKER_ID,
-        "analysisType": "MOCK_FILENAME_CLASSIFIER",
-    }
+def classify_image(image_path: str):
+    image = Image.open(image_path).convert("RGB")
+
+    predictions = classifier(image)
+
+    predictions = sorted(
+        predictions,
+        key=lambda x: x["score"],
+        reverse=True,
+    )
+
+    top_prediction = predictions[0]
+
+    model_label = top_prediction["label"]
+    confidence = float(top_prediction["score"])
+    risk_level = determine_risk_level(model_label, confidence)
+
+    top_predictions = [
+        {
+            "label": pred["label"],
+            "score": float(pred["score"]),
+        }
+        for pred in predictions
+    ]
+
+    return model_label, confidence, risk_level, top_predictions
 
 
 def handle_task(channel, method, properties, body: bytes) -> None:
@@ -109,15 +122,37 @@ def handle_task(channel, method, properties, body: bytes) -> None:
         task = json.loads(body.decode("utf-8"))
         started = time.perf_counter()
 
-        print(f"[worker:{WORKER_ID}] received task: {task.get('taskId')} / {task.get('imageUrl')}")
+        print(
+            f"[worker:{WORKER_ID}] received task: "
+            f"{task.get('taskId')} / {task.get('imageUrl')}"
+        )
 
-        # Worker 병렬 처리 효과를 보여주기 위한 데모용 지연
-        time.sleep(MOCK_PROCESSING_DELAY)
+        image_url = task["imageUrl"]
+        image_path = resolve_image_path(image_url)
 
-        category, risk_level, confidence = classify_by_filename(task)
+        model_label, confidence, risk_level, top_predictions = classify_image(image_path)
+
         processing_ms = int((time.perf_counter() - started) * 1000)
 
-        result = build_result(task, category, risk_level, confidence, processing_ms)
+        result = {
+            "taskId": task.get("taskId"),
+            "reportId": task.get("reportId"),
+            "imageUrl": task.get("imageUrl"),
+            "location": task.get("location", ""),
+            "description": task.get("description", ""),
+            "uploadedAt": task.get("uploadedAt"),
+            "originalFilename": task.get("originalFilename"),
+
+            "modelLabel": model_label,
+            "confidence": confidence,
+            "riskLevel": risk_level,
+            "topPredictions": top_predictions,
+
+            "processingMs": processing_ms,
+            "workerId": WORKER_ID,
+            "analyzedAt": now_iso(),
+            "analysisType": ANALYSIS_TYPE,
+        }
 
         channel.basic_publish(
             exchange="",
@@ -133,7 +168,8 @@ def handle_task(channel, method, properties, body: bytes) -> None:
 
         print(
             f"[worker:{WORKER_ID}] analyzed "
-            f"{result.get('reportId')} as {category}/{risk_level} "
+            f"{result.get('reportId')} as "
+            f"{model_label} ({confidence:.3f}) -> {risk_level} "
             f"({processing_ms} ms)"
         )
 
@@ -149,8 +185,6 @@ def main() -> None:
     channel.queue_declare(queue=TASK_QUEUE, durable=True)
     channel.queue_declare(queue=RESULT_QUEUE, durable=True)
 
-    # Worker 하나가 한 번에 하나의 작업만 가져가도록 설정
-    # Worker 수를 늘렸을 때 병렬 처리 효과를 보기 좋게 함
     channel.basic_qos(prefetch_count=1)
 
     channel.basic_consume(
