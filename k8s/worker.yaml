@@ -20,8 +20,24 @@ spec:
           env:
             - name: RABBITMQ_HOST
               value: rabbitmq
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: TASK_QUEUE
+              value: image.task.queue
+            - name: RESULT_QUEUE
+              value: analysis.result.queue
             - name: STORAGE_ROOT
               value: /app/storage
+            - name: MOCK_PROCESSING_DELAY
+              value: "0.3"
           volumeMounts:
             - name: report-storage
               mountPath: /app/storage

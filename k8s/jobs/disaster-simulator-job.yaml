@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: upload-simulator-disaster
+  namespace: disaster-system
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: upload-simulator
+        mode: disaster
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: upload-simulator
+          image: disaster-simulator:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: BACKEND_URL
+              value: http://backend:8000
+            - name: MODE
+              value: disaster
+            - name: RATE
+              value: "20"
+            - name: DURATION
+              value: "30"

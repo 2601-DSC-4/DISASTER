@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: upload-simulator
+  name: upload-simulator-normal
   namespace: disaster-system
 spec:
   backoffLimit: 1
@@ -9,6 +9,7 @@ spec:
     metadata:
       labels:
         app: upload-simulator
+        mode: normal
     spec:
       restartPolicy: Never
       containers:
@@ -19,8 +20,8 @@ spec:
             - name: BACKEND_URL
               value: http://backend:8000
             - name: MODE
-              value: disaster
+              value: normal
             - name: RATE
-              value: "20"
+              value: "1"
             - name: DURATION
               value: "30"
