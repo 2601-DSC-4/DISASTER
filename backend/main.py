@@ -118,7 +118,6 @@ async def create_report(
     task = {
         "taskId": f"task-{uuid.uuid4().hex[:12]}",
         "reportId": report_id,
-        "imageId": image_id,
         "imageUrl": f"storage/reports/{stored_name}",
         "uploadedAt": now_iso(),
         "location": location,
@@ -146,7 +145,6 @@ async def create_report(
     return {
         "accepted": True,
         "reportId": report_id,
-        "imageId": image_id,
         "message": "report accepted and queued",
     }
 
@@ -187,6 +185,44 @@ def stats_summary() -> dict[str, Any]:
         "averageProcessingMs": avg_processing,
     }
 
+@app.get("/stats/location")
+def stats_by_location(limit: int = 5) -> dict[str, Any]:
+    client = redis_client()
+    
+    # 1. 수집된 모든 고유 지역명(Set) 가져오기
+    locations = client.smembers("stats:locations")
+    
+    location_stats = {}
+    for loc in locations:
+        # 2. 해당 지역의 총 신고 건수
+        total = int(client.get(f"stats:location:{loc}:totalReports") or 0)
+        
+        # 3. 해당 지역의 최근 리포트 데이터 가져오기 (기본 최신 5개)
+        report_ids = client.lrange(f"recent_reports:location:{loc}", 0, max(limit - 1, 0))
+        recent_items = []
+        for r_id in report_ids:
+            raw = client.get(f"report:{r_id}")
+            if raw:
+                recent_items.append(json.loads(raw))
+                
+        # 4. 지역별 통계 구조 바인딩 (기존 stats/summary 포맷과 통일성 유지)
+        location_stats[loc] = {
+            "totalReports": total,
+            "categories": {
+                "FIRE": int(client.get(f"stats:location:{loc}:category:FIRE") or 0),
+                "FLOOD": int(client.get(f"stats:location:{loc}:category:FLOOD") or 0),
+                "NORMAL": int(client.get(f"stats:location:{loc}:category:NORMAL") or 0),
+                "UNKNOWN": int(client.get(f"stats:location:{loc}:category:UNKNOWN") or 0),
+            },
+            "risks": {
+                "HIGH": int(client.get(f"stats:location:{loc}:risk:HIGH") or 0),
+                "MEDIUM": int(client.get(f"stats:location:{loc}:risk:MEDIUM") or 0),
+                "LOW": int(client.get(f"stats:location:{loc}:risk:LOW") or 0),
+            },
+            "recentReports": recent_items
+        }
+        
+    return {"locations": location_stats}
 
 @app.get("/queue/status")
 def queue_status() -> dict[str, Any]:
