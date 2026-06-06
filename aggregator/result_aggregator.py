@@ -49,8 +49,9 @@ def connect_redis(retries: int = 60, delay: float = 2.0) -> redis.Redis:
 
 def save_result(client: redis.Redis, result: dict) -> None:
     report_id = result["reportId"]
-    category = result.get("category", "UNKNOWN")
+    model_label = result.get("modelLabel", "UNKNOWN")
     risk_level = result.get("riskLevel", "LOW")
+    location = result.get("location", "UNKNOWN") # [추가] 지역 정보 추출
     processing_ms = int(result.get("processingMs", 0))
 
     # 같은 reportId가 재전달되어도 통계가 중복 증가하지 않도록 처리 여부를 기록한다.
@@ -59,12 +60,24 @@ def save_result(client: redis.Redis, result: dict) -> None:
     client.lrem("recent_reports", 0, report_id)
     client.lpush("recent_reports", report_id)
     client.ltrim("recent_reports", 0, RECENT_LIMIT - 1)
+    
+    # [추가] 지역별 전용 최근 리포트 리스트 관리
+    client.lrem(f"recent_reports:location:{location}", 0, report_id)
+    client.lpush(f"recent_reports:location:{location}", report_id)
+    client.ltrim(f"recent_reports:location:{location}", 0, RECENT_LIMIT - 1)
 
     if is_new:
         client.incr("stats:totalReports")
-        client.incr(f"stats:category:{category}")
+        client.incr(f"stats:category:{model_label}")
         client.incr(f"stats:risk:{risk_level}")
         client.incrby("stats:processingMs:sum", processing_ms)
+        # [추가] 대시보드에서 고유 지역 목록 조회를 위한 고유 셋(Set) 저장
+        client.sadd("stats:locations", location)
+
+        # [추가] 지역별 전용 카운터 누적
+        client.incr(f"stats:location:{location}:totalReports")
+        client.incr(f"stats:location:{location}:category:{model_label}")
+        client.incr(f"stats:location:{location}:risk:{risk_level}")
 
 
 def handle_result(client: redis.Redis):

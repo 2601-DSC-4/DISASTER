@@ -33,8 +33,19 @@ def wait_for_backend(retries: int = 60, delay: float = 2.0) -> None:
 
 
 def upload_image(image_path: Path, index: int) -> None:
-    location = "Seoul Dongdaemun-gu"
-    description = f"{MODE} mode upload #{index} from {image_path.name}"
+    fname = image_path.name.lower()
+    if "fire" in fname:
+        location = "서울 강남구"
+        description = "건물 화재 의심 신고"
+    elif "water" in fname:
+        location = "부산 해운대구"
+        description = "도로 침수 신고"
+    elif "land" in fname:
+        location = "강원 춘천시"
+        description = "산사태 의심 신고"
+    else:
+        location = "서울 동대문구"
+        description = f"일반 상황 제보 #{index} ({image_path.name})"
 
     with image_path.open("rb") as file_obj:
         files = {"image": (image_path.name, file_obj, "image/jpeg")}
