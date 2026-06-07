@@ -9,18 +9,40 @@ const emptyStats = {
   averageProcessingMs: 0,
 };
 
+const DISPLAY_REGIONS = [
+  '서울 강남구',
+  '서울 동대문구',
+  '인천 미추홀구',
+  '부산 해운대구',
+  '강원 춘천시',
+  '대구 중구',
+  '광주 서구',
+  '대전 유성구',
+];
+
 function transformLocationData(data) {
-  return Object.entries(data.locations || {}).map(([location, s]) => {
+  const apiMap = {};
+  for (const [location, s] of Object.entries(data.locations || {})) {
     const topModelLabel =
       Object.entries(s.categories || {}).sort((a, b) => b[1] - a[1])[0]?.[0] || '-';
-    return {
+    apiMap[location] = {
       location,
       totalReports: s.totalReports,
       topModelLabel,
       riskCounts: s.risks,
       recentReports: s.recentReports || [],
     };
-  });
+  }
+
+  return DISPLAY_REGIONS.map((location) =>
+    apiMap[location] ?? {
+      location,
+      totalReports: 0,
+      topModelLabel: '-',
+      riskCounts: { HIGH: 0, LOW: 0, NORMAL: 0 },
+      recentReports: [],
+    }
+  );
 }
 
 async function getJson(path) {
@@ -98,6 +120,50 @@ function LocationCard({ region }) {
   );
 }
 
+function QueueGraph({ history }) {
+  const W = 800, H = 88;
+
+  if (history.length < 2) {
+    return <div className="queue-graph-empty">데이터 수집 중...</div>;
+  }
+
+  const maxVal = Math.max(...history.map(h => h.messages), 30);
+  const n = history.length;
+  const cx = (i) => (i / (n - 1)) * W;
+  const cy = (v) => H - (v / maxVal) * H * 0.92 - 4;
+
+  const current = history[history.length - 1].messages;
+  const color = current >= 30 ? '#ef4444' : current >= 10 ? '#f59e0b' : '#3b82f6';
+
+  const linePoints = history.map((h, i) => `${cx(i)},${cy(h.messages)}`).join(' ');
+  const areaPoints = [`0,${H}`, ...history.map((h, i) => `${cx(i)},${cy(h.messages)}`), `${W},${H}`].join(' ');
+
+  const y10 = cy(10), y30 = cy(30);
+
+  return (
+    <div className="queue-graph">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="queue-svg">
+        <defs>
+          <linearGradient id="qg" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.2" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.01" />
+          </linearGradient>
+        </defs>
+        {y30 > 0 && y30 < H && <line x1="0" y1={y30} x2={W} y2={y30} stroke="#f87171" strokeWidth="1" strokeDasharray="5,4" opacity="0.45" />}
+        {y10 > 0 && y10 < H && <line x1="0" y1={y10} x2={W} y2={y10} stroke="#fbbf24" strokeWidth="1" strokeDasharray="5,4" opacity="0.45" />}
+        <polygon points={areaPoints} fill="url(#qg)" />
+        <polyline points={linePoints} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        <circle cx={cx(n - 1)} cy={cy(current)} r="4" fill={color} />
+      </svg>
+      <div className="queue-graph-legend">
+        <span style={{ color: '#fbbf24' }}>— 경고 10</span>
+        <span style={{ color: '#f87171' }}>— 위험 30</span>
+        <span className="queue-graph-time">최근 2분</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App({ icons }) {
   const { AlertTriangle, Activity, Gauge, ServerCog, MapPin } = icons;
   const [stats, setStats] = useState(emptyStats);
@@ -109,7 +175,16 @@ export default function App({ icons }) {
   const [uploadResult, setUploadResult] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [locationError, setLocationError] = useState(null);
-  const [locationRegions, setLocationRegions] = useState([]);
+  const [locationRegions, setLocationRegions] = useState(
+    DISPLAY_REGIONS.map(location => ({
+      location,
+      totalReports: 0,
+      topModelLabel: '-',
+      riskCounts: { HIGH: 0, LOW: 0, NORMAL: 0 },
+      recentReports: [],
+    }))
+  );
+  const [queueHistory, setQueueHistory] = useState([]);
 
   useEffect(() => {
     let alive = true;
@@ -127,6 +202,7 @@ export default function App({ icons }) {
         setQueue(queueData);
         setReports(recentData.items || []);
         setLocationRegions(transformLocationData(locationData));
+        setQueueHistory(prev => [...prev.slice(-59), { messages: queueData.messages }]);
         setError('');
         setLastUpdated(Date.now());
       } catch (err) {
@@ -257,6 +333,19 @@ export default function App({ icons }) {
         <StatTile label="활성 Worker 추정" value={activeWorkers || '--'} tone="purple" />
       </section>
 
+      <section className="queue-history-panel">
+        <div className="queue-history-header">
+          <div className="queue-history-title">
+            <Activity size={16} />
+            <span>큐 길이 실시간 추이</span>
+          </div>
+          <span className="queue-history-current" data-level={queueAlertLevel}>
+            현재 {queue.messages}건
+          </span>
+        </div>
+        <QueueGraph history={queueHistory} />
+      </section>
+
       <section className="upload-section">
         <h2>이미지 제보</h2>
         <form onSubmit={handleUpload} className="upload-form">
@@ -333,7 +422,7 @@ export default function App({ icons }) {
         )}
       </section>
 
-      {locationRegions.length > 0 && (
+      {(
         <section className="locations-section">
           <div className="section-header">
             <MapPin size={24} />
