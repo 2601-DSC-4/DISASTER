@@ -71,6 +71,8 @@ def save_result(client: redis.Redis, result: dict) -> None:
         client.incr(f"stats:category:{model_label}")
         client.incr(f"stats:risk:{risk_level}")
         client.incrby("stats:processingMs:sum", processing_ms)
+        client.sadd("stats:modelLabels", model_label)
+        client.sadd("stats:riskLevels", risk_level)
         # [추가] 대시보드에서 고유 지역 목록 조회를 위한 고유 셋(Set) 저장
         client.sadd("stats:locations", location)
 
@@ -78,6 +80,8 @@ def save_result(client: redis.Redis, result: dict) -> None:
         client.incr(f"stats:location:{location}:totalReports")
         client.incr(f"stats:location:{location}:category:{model_label}")
         client.incr(f"stats:location:{location}:risk:{risk_level}")
+        client.sadd(f"stats:location:{location}:modelLabels", model_label)
+        client.sadd(f"stats:location:{location}:riskLevels", risk_level)
 
 
 def handle_result(client: redis.Redis):

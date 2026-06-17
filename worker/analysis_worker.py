@@ -25,17 +25,21 @@ TIMEZONE = ZoneInfo(os.getenv("TIMEZONE", "Asia/Seoul"))
 STORAGE_ROOT = os.getenv("STORAGE_ROOT", "/app/storage")
 
 MODEL_NAME = os.getenv("MODEL_NAME", "Luwayy/disaster_images_model")
-ANALYSIS_TYPE = "HF_DISASTER_MODEL"
+ANALYZER_MODE = os.getenv("ANALYZER_MODE", "hf").lower()
+ANALYSIS_TYPE = "FAST_LOCAL_IMAGE_ANALYZER" if ANALYZER_MODE == "fast_local" else "HF_DISASTER_MODEL"
 
 
-print(f"[worker:{WORKER_ID}] loading model {MODEL_NAME}")
+classifier = None
 
-classifier = pipeline(
-    task="image-classification",
-    model=MODEL_NAME,
-)
-
-print(f"[worker:{WORKER_ID}] model loaded")
+if ANALYZER_MODE == "fast_local":
+    print(f"[worker:{WORKER_ID}] using fast local image analyzer")
+else:
+    print(f"[worker:{WORKER_ID}] loading model {MODEL_NAME}")
+    classifier = pipeline(
+        task="image-classification",
+        model=MODEL_NAME,
+    )
+    print(f"[worker:{WORKER_ID}] model loaded")
 
 
 def now_iso() -> str:
@@ -80,7 +84,7 @@ def resolve_image_path(image_url: str) -> str:
 
 
 def determine_risk_level(model_label: str, confidence: float) -> str:
-    if model_label == "Non_Damage":
+    if model_label in {"Non_Damage", "NORMAL"}:
         return "NORMAL"
 
     if confidence >= 0.7:
@@ -91,6 +95,31 @@ def determine_risk_level(model_label: str, confidence: float) -> str:
 
 def classify_image(image_path: str):
     image = Image.open(image_path).convert("RGB")
+
+    if ANALYZER_MODE == "fast_local":
+        resized = image.resize((64, 64))
+        pixels = list(resized.getdata())
+        count = len(pixels)
+        avg_r = sum(pixel[0] for pixel in pixels) / count
+        avg_g = sum(pixel[1] for pixel in pixels) / count
+        avg_b = sum(pixel[2] for pixel in pixels) / count
+
+        if avg_r > avg_b * 1.15 and avg_r > avg_g * 1.05:
+            model_label = "FIRE"
+            confidence = min(0.95, 0.55 + (avg_r - max(avg_g, avg_b)) / 255)
+        elif avg_b > avg_r * 1.05 and avg_b > avg_g * 0.9:
+            model_label = "FLOOD"
+            confidence = min(0.92, 0.55 + (avg_b - avg_r) / 255)
+        else:
+            model_label = "NORMAL"
+            confidence = 0.82
+
+        risk_level = determine_risk_level(model_label, confidence)
+        top_predictions = [
+            {"label": model_label, "score": confidence},
+            {"label": "NORMAL", "score": 1 - confidence if model_label != "NORMAL" else confidence},
+        ]
+        return model_label, confidence, risk_level, top_predictions
 
     predictions = classifier(image)
 
