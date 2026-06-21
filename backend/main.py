@@ -168,20 +168,13 @@ def stats_summary() -> dict[str, Any]:
     total = int(client.get("stats:totalReports") or 0)
     processing_sum = int(client.get("stats:processingMs:sum") or 0)
     avg_processing = round(processing_sum / total, 2) if total else 0
+    model_labels = sorted(set(client.smembers("stats:modelLabels")) | {"FIRE", "FLOOD", "NORMAL", "UNKNOWN"})
+    risk_levels = sorted(set(client.smembers("stats:riskLevels")) | {"HIGH", "MEDIUM", "LOW", "NORMAL"})
 
     return {
         "totalReports": total,
-        "categories": {
-            "FIRE": int(client.get("stats:category:FIRE") or 0),
-            "FLOOD": int(client.get("stats:category:FLOOD") or 0),
-            "NORMAL": int(client.get("stats:category:NORMAL") or 0),
-            "UNKNOWN": int(client.get("stats:category:UNKNOWN") or 0),
-        },
-        "risks": {
-            "HIGH": int(client.get("stats:risk:HIGH") or 0),
-            "MEDIUM": int(client.get("stats:risk:MEDIUM") or 0),
-            "LOW": int(client.get("stats:risk:LOW") or 0),
-        },
+        "categories": {label: int(client.get(f"stats:category:{label}") or 0) for label in model_labels},
+        "risks": {level: int(client.get(f"stats:risk:{level}") or 0) for level in risk_levels},
         "averageProcessingMs": avg_processing,
     }
 
@@ -206,18 +199,17 @@ def stats_by_location(limit: int = 5) -> dict[str, Any]:
                 recent_items.append(json.loads(raw))
                 
         # 4. 지역별 통계 구조 바인딩 (기존 stats/summary 포맷과 통일성 유지)
+        model_labels = sorted(set(client.smembers(f"stats:location:{loc}:modelLabels")) | {"FIRE", "FLOOD", "NORMAL", "UNKNOWN"})
+        risk_levels = sorted(set(client.smembers(f"stats:location:{loc}:riskLevels")) | {"HIGH", "MEDIUM", "LOW", "NORMAL"})
         location_stats[loc] = {
             "totalReports": total,
             "categories": {
-                "FIRE": int(client.get(f"stats:location:{loc}:category:FIRE") or 0),
-                "FLOOD": int(client.get(f"stats:location:{loc}:category:FLOOD") or 0),
-                "NORMAL": int(client.get(f"stats:location:{loc}:category:NORMAL") or 0),
-                "UNKNOWN": int(client.get(f"stats:location:{loc}:category:UNKNOWN") or 0),
+                label: int(client.get(f"stats:location:{loc}:category:{label}") or 0)
+                for label in model_labels
             },
             "risks": {
-                "HIGH": int(client.get(f"stats:location:{loc}:risk:HIGH") or 0),
-                "MEDIUM": int(client.get(f"stats:location:{loc}:risk:MEDIUM") or 0),
-                "LOW": int(client.get(f"stats:location:{loc}:risk:LOW") or 0),
+                level: int(client.get(f"stats:location:{loc}:risk:{level}") or 0)
+                for level in risk_levels
             },
             "recentReports": recent_items
         }

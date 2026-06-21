@@ -12,6 +12,8 @@ const emptyStats = {
 const DISPLAY_REGIONS = [
   '서울 강남구',
   '서울 동대문구',
+  '서울 중구',
+  '경기 성남시',
   '인천 미추홀구',
   '부산 해운대구',
   '강원 춘천시',
@@ -34,7 +36,12 @@ function transformLocationData(data) {
     };
   }
 
-  return DISPLAY_REGIONS.map((location) =>
+  const orderedLocations = [
+    ...DISPLAY_REGIONS,
+    ...Object.keys(apiMap).filter((location) => !DISPLAY_REGIONS.includes(location)).sort(),
+  ];
+
+  return orderedLocations.map((location) =>
     apiMap[location] ?? {
       location,
       totalReports: 0,
@@ -43,6 +50,13 @@ function transformLocationData(data) {
       recentReports: [],
     }
   );
+}
+
+function formatDuration(seconds) {
+  const safeSeconds = Math.max(0, seconds || 0);
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return `${minutes}:${String(remainingSeconds).padStart(2, '0')}`;
 }
 
 async function getJson(path) {
@@ -185,6 +199,8 @@ export default function App({ icons }) {
     }))
   );
   const [queueHistory, setQueueHistory] = useState([]);
+  const [queueActiveSince, setQueueActiveSince] = useState(null);
+  const [clockTick, setClockTick] = useState(Date.now());
 
   useEffect(() => {
     let alive = true;
@@ -203,6 +219,11 @@ export default function App({ icons }) {
         setReports(recentData.items || []);
         setLocationRegions(transformLocationData(locationData));
         setQueueHistory(prev => [...prev.slice(-59), { messages: queueData.messages }]);
+        setQueueActiveSince(prev => {
+          const messages = queueData.messages ?? 0;
+          if (messages > 0) return prev ?? Date.now();
+          return null;
+        });
         setError('');
         setLastUpdated(Date.now());
       } catch (err) {
@@ -222,6 +243,11 @@ export default function App({ icons }) {
       alive = false;
       clearInterval(timer);
     };
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockTick(Date.now()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   async function handleUpload(e) {
@@ -287,6 +313,11 @@ export default function App({ icons }) {
     return ids.size;
   }, [reports]);
 
+  const queueElapsedSeconds = useMemo(() => {
+    if (!queueActiveSince) return 0;
+    return Math.floor((clockTick - queueActiveSince) / 1000);
+  }, [clockTick, queueActiveSince]);
+
   const dangerRatio = useMemo(() => {
     const total = stats.totalReports || 1;
     return (stats.categories.FIRE + stats.categories.FLOOD) / total;
@@ -331,6 +362,7 @@ export default function App({ icons }) {
         />
         <StatTile label="평균 처리 시간" value={`${stats.averageProcessingMs.toFixed(1)} ms`} tone="green" />
         <StatTile label="활성 Worker 추정" value={activeWorkers || '--'} tone="purple" />
+        <StatTile label="큐 누적 시간" value={queueActiveSince ? formatDuration(queueElapsedSeconds) : '--'} tone="blue" />
       </section>
 
       <section className="queue-history-panel">

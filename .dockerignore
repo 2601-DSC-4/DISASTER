@@ -5,3 +5,5 @@ __pycache__
 node_modules
 dashboard/node_modules
 storage/reports/*
+hf_disaster_images/
+test_images/

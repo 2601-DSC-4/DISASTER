@@ -46,6 +46,11 @@ services:
     environment:
       RABBITMQ_HOST: rabbitmq
       STORAGE_ROOT: /app/storage
+      ANALYZER_MODE: hf
+      MODEL_NAME: Luwayy/disaster_images_model
+      HF_HOME: /app/.cache/huggingface
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
     volumes:
       - ./storage:/app/storage
     depends_on:

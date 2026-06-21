@@ -20,6 +20,8 @@ spec:
           env:
             - name: RABBITMQ_HOST
               value: rabbitmq
+            - name: RABBITMQ_PORT
+              value: "5672"
             - name: RABBITMQ_USER
               valueFrom:
                 secretKeyRef:
@@ -32,6 +34,8 @@ spec:
                   key: password
             - name: REDIS_HOST
               value: redis
+            - name: REDIS_PORT
+              value: "6379"
             - name: STORAGE_DIR
               value: /app/storage/reports
             - name: TASK_QUEUE

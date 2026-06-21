@@ -1,6 +1,7 @@
 import os
 import time
 from itertools import cycle
+import mimetypes
 from pathlib import Path
 
 import requests
@@ -12,6 +13,7 @@ DEFAULT_RATE = 20 if MODE == "disaster" else 1
 RATE = int(os.getenv("RATE", str(DEFAULT_RATE)))
 DURATION = int(os.getenv("DURATION", "30"))
 SAMPLE_DIR = Path(os.getenv("SAMPLE_DIR", "/app/sample_images"))
+SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
 # 영상 데모용: 업로드가 끝난 뒤 RabbitMQ 작업 큐가 빌 때까지 기다리며 총 시간을 출력한다.
 WAIT_FOR_QUEUE_DRAIN = os.getenv("WAIT_FOR_QUEUE_DRAIN", "true").lower() in {"1", "true", "yes"}
@@ -32,23 +34,37 @@ def wait_for_backend(retries: int = 60, delay: float = 2.0) -> None:
     raise RuntimeError("backend is not reachable")
 
 
+def image_mime_type(image_path: Path) -> str:
+    mime_type, _ = mimetypes.guess_type(image_path.name)
+    return mime_type or "application/octet-stream"
+
+
 def upload_image(image_path: Path, index: int) -> None:
-    fname = image_path.name.lower()
-    if "fire" in fname:
+    fname = str(image_path).lower()
+    if "non_damage" in fname or "non-damage" in fname:
+        location = "서울 동대문구"
+        description = f"일반 상황 제보 #{index} ({image_path.name})"
+    elif "fire" in fname:
         location = "서울 강남구"
         description = "건물 화재 의심 신고"
-    elif "water" in fname:
+    elif "water" in fname or "flood" in fname:
         location = "부산 해운대구"
         description = "도로 침수 신고"
     elif "land" in fname:
         location = "강원 춘천시"
         description = "산사태 의심 신고"
+    elif "human" in fname:
+        location = "서울 중구"
+        description = "인명 피해 의심 신고"
+    elif "infrastructure" in fname or "infrasturcture" in fname:
+        location = "경기 성남시"
+        description = "시설물 피해 의심 신고"
     else:
         location = "서울 동대문구"
         description = f"일반 상황 제보 #{index} ({image_path.name})"
 
     with image_path.open("rb") as file_obj:
-        files = {"image": (image_path.name, file_obj, "image/jpeg")}
+        files = {"image": (image_path.name, file_obj, image_mime_type(image_path))}
         data = {"location": location, "description": description}
         response = requests.post(f"{BACKEND_URL}/reports", files=files, data=data, timeout=10)
         response.raise_for_status()
@@ -93,9 +109,14 @@ def wait_for_queue_drain(started_at: float) -> None:
 
 
 def main() -> None:
-    images = sorted(SAMPLE_DIR.glob("*.jpg"))
+    images = sorted(
+        path
+        for path in SAMPLE_DIR.rglob("*")
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_EXTENSIONS
+    )
     if not images:
-        raise RuntimeError(f"no sample images found in {SAMPLE_DIR}")
+        extensions = ", ".join(sorted(SUPPORTED_IMAGE_EXTENSIONS))
+        raise RuntimeError(f"no sample images ({extensions}) found in {SAMPLE_DIR}")
 
     wait_for_backend()
     print(f"[simulator] mode={MODE}, rate={RATE}/sec, duration={DURATION}s")

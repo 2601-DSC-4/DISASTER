@@ -28,9 +28,24 @@ spec:
     kind: Deployment
     name: analysis-worker
   pollingInterval: 5
-  cooldownPeriod: 30
+  cooldownPeriod: 10
   minReplicaCount: 1
   maxReplicaCount: 5
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 10
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 5
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 2
+              periodSeconds: 15
   triggers:
     - type: rabbitmq
       metadata:
